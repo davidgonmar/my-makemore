@@ -16,7 +16,9 @@ n_chars = len(chars)
 
 
 class NeuralProbLM(nn.Module):
-    def __init__(self, vocab_size: int, vocab_dimensionality: int, seq_len: int, hidden_size):
+    def __init__(
+        self, vocab_size: int, vocab_dimensionality: int, seq_len: int, hidden_size
+    ):
         """
         Initializes the NeuralProbLM model.
 
@@ -30,8 +32,8 @@ class NeuralProbLM(nn.Module):
         super().__init__()
 
         # as the paper A mapping C from any element i of V to a real vector C(i) ∈ Rm. It represents the distributed
-        #feature vectors associated with each word in the vocabulary. In practice, C is represented by
-        #a |V| ×m matrix of free parameters
+        # feature vectors associated with each word in the vocabulary. In practice, C is represented by
+        # a |V| ×m matrix of free parameters
         self.embed = nn.Parameter(torch.randn(vocab_size, vocab_dimensionality))
         self.H = nn.Parameter(torch.randn(hidden_size, seq_len * vocab_dimensionality))
         self.d = nn.Parameter(torch.zeros(hidden_size))
@@ -41,7 +43,7 @@ class NeuralProbLM(nn.Module):
         self.vocab_size = vocab_size
         self.vocab_dimensionality = vocab_dimensionality
         self.hidden_size = hidden_size
-    
+
     def forward(self, x: torch.Tensor):
         """
         Args:
@@ -56,33 +58,34 @@ class NeuralProbLM(nn.Module):
         # This serves as a way to gather the embeddings in a batched way
         one_hot_x = F.one_hot(x, self.vocab_size).float()
 
-
         # Shape (batch_size, seq_len, vocab_dimensionality), where each row represents the embedding of the character,
-        # so total number of columns is vocab_size 
+        # so total number of columns is vocab_size
         embeddings = one_hot_x @ self.embed
 
-        flat = torch.reshape(embeddings, (x.shape[0], -1)) # flatten the embeddings to a shape of (batch_size, seq_len * vocab_dimensionality)
+        flat = torch.reshape(
+            embeddings, (x.shape[0], -1)
+        )  # flatten the embeddings to a shape of (batch_size, seq_len * vocab_dimensionality)
 
-        a = torch.tanh(flat @ self.H.T + self.d)   # shape (batch_size, hidden_size)
+        a = torch.tanh(flat @ self.H.T + self.d)  # shape (batch_size, hidden_size)
         a = a @ self.U.T + self.b  # shape (batch_size, vocab_size)
-        
-        return a # we dont compute softmax so these arent probabilities yet!
+
+        return a  # we dont compute softmax so these arent probabilities yet!
 
 
 def build_dataset(words: List[str], seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
-  X, Y = [], []
-  for w in words:
+    X, Y = [], []
+    for w in words:
+        context = [stoi["."]] * seq_len
+        for ch in w + ".":
+            ix = stoi[ch]
+            X.append(context)
+            Y.append(ix)
+            context = context[1:] + [ix]
 
-    context = [stoi['.']] * seq_len
-    for ch in w + '.':
-      ix = stoi[ch]
-      X.append(context)
-      Y.append(ix)
-      context = context[1:] + [ix]
+    X = torch.tensor(X)
+    Y = torch.tensor(Y)
+    return X, Y
 
-  X = torch.tensor(X)
-  Y = torch.tensor(Y)
-  return X, Y
 
 def train(model: NeuralProbLM, names: List[str]):
     seq_len = 3
@@ -93,13 +96,13 @@ def train(model: NeuralProbLM, names: List[str]):
     sched = torch.optim.lr_scheduler.StepLR(optim, step_size=10000, gamma=0.1)
     avg_loss = 0
     for epoch in range(epochs):
-        idx = torch.randint(0, x.shape[0], (batch_size, ))
+        idx = torch.randint(0, x.shape[0], (batch_size,))
         x_batch = x[idx]
         y_batch = y[idx]
 
         out = model(x_batch)
 
-        loss = F.cross_entropy(out,y_batch)
+        loss = F.cross_entropy(out, y_batch)
 
         optim.zero_grad()
 
@@ -115,10 +118,9 @@ def train(model: NeuralProbLM, names: List[str]):
             avg_loss = 0
 
 
-
 def predict(model, seq_len):
     # init all with '.'
-    context = [stoi['.']] * seq_len
+    context = [stoi["."]] * seq_len
     result = []
     while True:
         x = torch.tensor([context])
@@ -131,19 +133,22 @@ def predict(model, seq_len):
         result.append(pred)
     return "".join(itos[i] for i in result)
 
+
 def test(model, inputs, targets):
     out = model(inputs)
     loss = F.cross_entropy(out, targets)
     print(f"Test loss: {loss.item()}")
-    
+
+
 if __name__ == "__main__":
     model = NeuralProbLM(n_chars, vocab_dimensionality=2, seq_len=3, hidden_size=200)
     # shuffle names
     import random
+
     random.shuffle(names)
-    names_train = names[:int(len(names) * 0.9)]
+    names_train = names[: int(len(names) * 0.9)]
     random.shuffle(names_train)
-    names_test = names[int(len(names) * 0.9):]
+    names_test = names[int(len(names) * 0.9) :]
     train(model, names_train)
     test(model, *build_dataset(names_test, 3))
 
