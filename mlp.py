@@ -4,6 +4,8 @@ import torch.nn.functional as F
 import torch
 from typing import List, Tuple
 
+
+torch.manual_seed(0)
 names = read_names()
 
 chars = list(sorted(set("".join(names))))
@@ -14,6 +16,10 @@ itos = {idx: s for idx, s in enumerate(chars)}
 
 n_chars = len(chars)
 
+
+# shape[1] since we will transpose the matrix during the forward pass
+def kaiming_init_tanh_fanin(shape):
+    return torch.randn(shape) * (5 / 3) / (shape[1] ** 0.5)
 
 class NeuralProbLM(nn.Module):
     def __init__(
@@ -34,15 +40,24 @@ class NeuralProbLM(nn.Module):
         # as the paper A mapping C from any element i of V to a real vector C(i) ∈ Rm. It represents the distributed
         # feature vectors associated with each word in the vocabulary. In practice, C is represented by
         # a |V| ×m matrix of free parameters
-        self.embed = nn.Parameter(torch.randn(vocab_size, vocab_dimensionality))
-        self.H = nn.Parameter(torch.randn(hidden_size, seq_len * vocab_dimensionality))
-        self.d = nn.Parameter(torch.zeros(hidden_size))
-        self.U = nn.Parameter(torch.randn(vocab_size, hidden_size))
-        self.b = nn.Parameter(torch.randn(vocab_size))
+        self.embed = nn.Parameter(torch.randn(vocab_size, vocab_dimensionality), requires_grad=True)
+        self.H = nn.Parameter(kaiming_init_tanh_fanin((hidden_size, seq_len * vocab_dimensionality)), requires_grad=True)
+        self.U = nn.Parameter(kaiming_init_tanh_fanin((vocab_size, hidden_size)), requires_grad=True)
+        self.b = nn.Parameter(torch.zeros(vocab_size), requires_grad=True)
         self.seq_len = seq_len
         self.vocab_size = vocab_size
         self.vocab_dimensionality = vocab_dimensionality
         self.hidden_size = hidden_size
+
+        # learnable parameters for batch normalization
+        self.bn_gain = nn.Parameter(torch.ones(hidden_size), requires_grad=True)
+        self.bn_bias = nn.Parameter(torch.zeros(hidden_size), requires_grad=True)
+
+        # running averages for batch normalization during inference
+        self.stat_change_rate = 0.01
+        # technically, they are still part of the model, but not updated during backpropagation
+        self.register_buffer("running_mean", torch.zeros(hidden_size))
+        self.register_buffer("running_var", torch.ones(hidden_size))
 
     def forward(self, x: torch.Tensor):
         """
@@ -58,18 +73,36 @@ class NeuralProbLM(nn.Module):
         # This serves as a way to gather the embeddings in a batched way
         one_hot_x = F.one_hot(x, self.vocab_size).float()
 
-        # Shape (batch_size, seq_len, vocab_dimensionality), where each row represents the embedding of the character,
+        # First, we get embeddings of shape (batch_size, seq_len, vocab_dimensionality), where each row represents the embedding of the character,
         # so total number of columns is vocab_size
-        embeddings = one_hot_x @ self.embed
+        # Then, we flatten the embeddings to (batch_size, seq_len * vocab_dimensionality)
+        flat_embeddings = (one_hot_x @ self.embed).reshape(x.shape[0], -1)
 
-        flat = torch.reshape(
-            embeddings, (x.shape[0], -1)
-        )  # flatten the embeddings to a shape of (batch_size, seq_len * vocab_dimensionality)
+        # Shape (batch_size, hidden_size)
+        preacts = flat_embeddings @ self.H.T # we dont use bias because we use batch normalization, and it gets 'absorbed' into the batch norm parameters.
+        # The paper that introduced batch normalization (https://arxiv.org/abs/1502.03167) explains it.
 
-        a = torch.tanh(flat @ self.H.T + self.d)  # shape (batch_size, hidden_size)
-        a = a @ self.U.T + self.b  # shape (batch_size, vocab_size)
+        # batch normalization (with learnable parameters!) (dim 0 is the batch dimension), only during training
+        if self.training:
+            mean = preacts.mean(dim=0)
+            var = preacts.var(dim=0)
+            norm_preacts = self.bn_gain * (preacts - mean) / (var + 1e-5).sqrt()  + self.bn_bias # centers and scales to have mean 0 and std (and variance) close to 1
+            # update running averages (for inference time), but we dont need to compute gradients for this
+            with torch.no_grad():
+                self.running_mean = self.stat_change_rate * mean + (1 - self.stat_change_rate) * self.running_mean
+                self.running_var = self.stat_change_rate * var + (1 - self.stat_change_rate) * self.running_var
 
-        return a  # we dont compute softmax so these arent probabilities yet!
+        else:
+            # use running averages for batch normalization in inference time
+            norm_preacts = self.bn_gain * (preacts - self.running_mean) / (self.running_var + 1e-5).sqrt() + self.bn_bias
+        
+        # non-linearity
+        acts = torch.tanh(norm_preacts)
+        
+        # output computation
+        out = acts @ self.U.T + self.b
+
+        return out  # we dont compute softmax so these arent probabilities yet!
 
 
 def build_dataset(words: List[str], seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -91,9 +124,10 @@ def train(model: NeuralProbLM, names: List[str]):
     seq_len = 3
     x, y = build_dataset(names, seq_len)
     batch_size = 32
-    epochs = 30000
-    optim = torch.optim.SGD(model.parameters(), lr=0.2)
-    sched = torch.optim.lr_scheduler.StepLR(optim, step_size=10000, gamma=0.1)
+    epochs = 300000
+    optim = torch.optim.SGD(model.parameters(), lr=0.1)
+    sched = torch.optim.lr_scheduler.StepLR(optim, step_size=100000, gamma=0.1)
+    model.train()
     avg_loss = 0
     for epoch in range(epochs):
         idx = torch.randint(0, x.shape[0], (batch_size,))
@@ -117,8 +151,9 @@ def train(model: NeuralProbLM, names: List[str]):
             print(f"Epoch {epoch}/{epochs}, loss: {avg_loss / 10}")
             avg_loss = 0
 
-
+@torch.no_grad()
 def predict(model, seq_len):
+    model.eval()
     # init all with '.'
     context = [stoi["."]] * seq_len
     result = []
@@ -131,17 +166,20 @@ def predict(model, seq_len):
             break
         context = context[1:] + [pred]
         result.append(pred)
+    model.train()
     return "".join(itos[i] for i in result)
 
-
+@torch.no_grad()
 def test(model, inputs, targets):
+    model.eval()
     out = model(inputs)
     loss = F.cross_entropy(out, targets)
     print(f"Test loss: {loss.item()}")
+    model.train()
 
 
 if __name__ == "__main__":
-    model = NeuralProbLM(n_chars, vocab_dimensionality=2, seq_len=3, hidden_size=200)
+    model = NeuralProbLM(n_chars, vocab_dimensionality=18, seq_len=3, hidden_size=200)
     # shuffle names
     import random
 
