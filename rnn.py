@@ -39,19 +39,19 @@ class RNNLangModel(nn.Module):
         output = None
         for t in range(seq_len):
             # follows nomenclature in paper
-            w = tokens[:, t, :] # shape (batch_size, embed_dim)
-            x =  torch.cat([prev_hidden, w], dim=1) # shape (batch_size, embed_dim + hidden_units)
-            s = F.sigmoid(self.l1(x)) # shape (batch_size, hidden_units)
+            w = tokens[:, t, :]  # shape (batch_size, embed_dim)
+            x = torch.cat(
+                [prev_hidden, w], dim=1
+            )  # shape (batch_size, embed_dim + hidden_units)
+            s = F.sigmoid(self.l1(x))  # shape (batch_size, hidden_units)
             prev_hidden = s
             # only predict for last word!!
             if t is seq_len - 1:
-                output = self.l2(s) # shape (batch_size, vocab_size)
-        
+                output = self.l2(s)  # shape (batch_size, vocab_size)
+
         # output is not probabilities, but logits (the paper uses softmax, but I decided to leave it out of the model)
-        return output # batch_size, vocab_size
+        return output  # batch_size, vocab_size
 
-
-            
 
 def build_dataset(words: List[str], seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
     X, Y = [], []
@@ -99,6 +99,7 @@ def train(model: RNNLangModel, names: List[str]):
             print(f"Epoch {epoch}/{epochs}, loss: {avg_loss / 10}")
             avg_loss = 0
 
+
 @torch.no_grad()
 def predict(model, seq_len):
     model.eval()
@@ -116,6 +117,7 @@ def predict(model, seq_len):
         result.append(pred)
     model.train()
     return "".join(itos[i] for i in result)
+
 
 @torch.no_grad()
 def test(model, inputs, targets):

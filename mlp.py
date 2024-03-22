@@ -21,6 +21,7 @@ n_chars = len(chars)
 def kaiming_init_tanh_fanin(shape):
     return torch.randn(shape) * (5 / 3) / (shape[1] ** 0.5)
 
+
 class NeuralProbLM(nn.Module):
     def __init__(
         self, vocab_size: int, vocab_dimensionality: int, seq_len: int, hidden_size
@@ -40,9 +41,16 @@ class NeuralProbLM(nn.Module):
         # as the paper A mapping C from any element i of V to a real vector C(i) ∈ Rm. It represents the distributed
         # feature vectors associated with each word in the vocabulary. In practice, C is represented by
         # a |V| ×m matrix of free parameters
-        self.embed = nn.Parameter(torch.randn(vocab_size, vocab_dimensionality), requires_grad=True)
-        self.H = nn.Parameter(kaiming_init_tanh_fanin((hidden_size, seq_len * vocab_dimensionality)), requires_grad=True)
-        self.U = nn.Parameter(kaiming_init_tanh_fanin((vocab_size, hidden_size)), requires_grad=True)
+        self.embed = nn.Parameter(
+            torch.randn(vocab_size, vocab_dimensionality), requires_grad=True
+        )
+        self.H = nn.Parameter(
+            kaiming_init_tanh_fanin((hidden_size, seq_len * vocab_dimensionality)),
+            requires_grad=True,
+        )
+        self.U = nn.Parameter(
+            kaiming_init_tanh_fanin((vocab_size, hidden_size)), requires_grad=True
+        )
         self.b = nn.Parameter(torch.zeros(vocab_size), requires_grad=True)
         self.seq_len = seq_len
         self.vocab_size = vocab_size
@@ -79,26 +87,41 @@ class NeuralProbLM(nn.Module):
         flat_embeddings = (one_hot_x @ self.embed).reshape(x.shape[0], -1)
 
         # Shape (batch_size, hidden_size)
-        preacts = flat_embeddings @ self.H.T # we dont use bias because we use batch normalization, and it gets 'absorbed' into the batch norm parameters.
+        preacts = (
+            flat_embeddings @ self.H.T
+        )  # we dont use bias because we use batch normalization, and it gets 'absorbed' into the batch norm parameters.
         # The paper that introduced batch normalization (https://arxiv.org/abs/1502.03167) explains it.
 
         # batch normalization (with learnable parameters!) (dim 0 is the batch dimension), only during training
         if self.training:
             mean = preacts.mean(dim=0)
             var = preacts.var(dim=0)
-            norm_preacts = self.bn_gain * (preacts - mean) / (var + 1e-5).sqrt()  + self.bn_bias # centers and scales to have mean 0 and std (and variance) close to 1
+            norm_preacts = (
+                self.bn_gain * (preacts - mean) / (var + 1e-5).sqrt() + self.bn_bias
+            )  # centers and scales to have mean 0 and std (and variance) close to 1
             # update running averages (for inference time), but we dont need to compute gradients for this
             with torch.no_grad():
-                self.running_mean = self.stat_change_rate * mean + (1 - self.stat_change_rate) * self.running_mean
-                self.running_var = self.stat_change_rate * var + (1 - self.stat_change_rate) * self.running_var
+                self.running_mean = (
+                    self.stat_change_rate * mean
+                    + (1 - self.stat_change_rate) * self.running_mean
+                )
+                self.running_var = (
+                    self.stat_change_rate * var
+                    + (1 - self.stat_change_rate) * self.running_var
+                )
 
         else:
             # use running averages for batch normalization in inference time
-            norm_preacts = self.bn_gain * (preacts - self.running_mean) / (self.running_var + 1e-5).sqrt() + self.bn_bias
-        
+            norm_preacts = (
+                self.bn_gain
+                * (preacts - self.running_mean)
+                / (self.running_var + 1e-5).sqrt()
+                + self.bn_bias
+            )
+
         # non-linearity
         acts = torch.tanh(norm_preacts)
-        
+
         # output computation
         out = acts @ self.U.T + self.b
 
@@ -151,6 +174,7 @@ def train(model: NeuralProbLM, names: List[str]):
             print(f"Epoch {epoch}/{epochs}, loss: {avg_loss / 10}")
             avg_loss = 0
 
+
 @torch.no_grad()
 def predict(model, seq_len):
     model.eval()
@@ -168,6 +192,7 @@ def predict(model, seq_len):
         result.append(pred)
     model.train()
     return "".join(itos[i] for i in result)
+
 
 @torch.no_grad()
 def test(model, inputs, targets):

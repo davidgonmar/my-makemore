@@ -22,12 +22,21 @@ class RNNLangModel(nn.Module):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, embed_dim)
         self.hidden_units = hidden_units
-        self.candidate_mem_layer = nn.Sequential(nn.Linear(embed_dim + hidden_units, hidden_units), nn.Tanh())
-        self.forget_gate = nn.Sequential(nn.Linear(embed_dim + hidden_units, hidden_units), nn.Sigmoid())
-        self.input_gate = nn.Sequential(nn.Linear(embed_dim + hidden_units, hidden_units), nn.Sigmoid())
-        self.output_gate = nn.Sequential(nn.Linear(embed_dim + hidden_units, hidden_units), nn.Sigmoid())
+        self.candidate_mem_layer = nn.Sequential(
+            nn.Linear(embed_dim + hidden_units, hidden_units), nn.Tanh()
+        )
+        self.forget_gate = nn.Sequential(
+            nn.Linear(embed_dim + hidden_units, hidden_units), nn.Sigmoid()
+        )
+        self.input_gate = nn.Sequential(
+            nn.Linear(embed_dim + hidden_units, hidden_units), nn.Sigmoid()
+        )
+        self.output_gate = nn.Sequential(
+            nn.Linear(embed_dim + hidden_units, hidden_units), nn.Sigmoid()
+        )
 
         self.to_out = nn.Linear(hidden_units, vocab_size)
+
     def forward(self, input: torch.Tensor):
         # output is of size batch_size, vocab_size, representing probabilities for next word in vocab
         # input is a vector of shape batch_size, sequence_length
@@ -54,13 +63,11 @@ class RNNLangModel(nn.Module):
 
             # only predict for last word!!
             if t is seq_len - 1:
-                output = self.to_out(prev_h) # shape (batch_size, vocab_size)
-        
+                output = self.to_out(prev_h)  # shape (batch_size, vocab_size)
+
         # output is not probabilities, but logits (the paper uses softmax, but I decided to leave it out of the model)
-        return output # batch_size, vocab_size
+        return output  # batch_size, vocab_size
 
-
-            
 
 def build_dataset(words: List[str], seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
     X, Y = [], []
@@ -108,6 +115,7 @@ def train(model: RNNLangModel, names: List[str]):
             print(f"Epoch {epoch}/{epochs}, loss: {avg_loss / 10}")
             avg_loss = 0
 
+
 @torch.no_grad()
 def predict(model, seq_len):
     model.eval()
@@ -125,6 +133,7 @@ def predict(model, seq_len):
         result.append(pred)
     model.train()
     return "".join(itos[i] for i in result)
+
 
 @torch.no_grad()
 def test(model, inputs, targets):

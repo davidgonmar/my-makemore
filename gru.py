@@ -28,12 +28,10 @@ class RNNLangModel(nn.Module):
         self.update_gate = nn.Sequential(
             nn.Linear(hidden_units + embed_dim, hidden_units), nn.Sigmoid()
         )
-        self.candidate_state =nn.Sequential(
+        self.candidate_state = nn.Sequential(
             nn.Linear(hidden_units + embed_dim, hidden_units), nn.Tanh()
         )
         self.to_out = nn.Linear(hidden_units, vocab_size)
-
-        
 
     def forward(self, input: torch.Tensor):
         # output is of size batch_size, vocab_size, representing probabilities for next word in vocab
@@ -44,27 +42,29 @@ class RNNLangModel(nn.Module):
         tokens = self.embed(input)
 
         # shape (hidden_units)
-        prev_h= torch.zeros(batch_size, self.hidden_units)
+        prev_h = torch.zeros(batch_size, self.hidden_units)
 
         output = None
         for t in range(seq_len):
-            xt = tokens[:, t, :] # shape (batch_size, embed_dim)
-            catted  =  torch.cat([prev_h, xt], dim=1)
+            xt = tokens[:, t, :]  # shape (batch_size, embed_dim)
+            catted = torch.cat([prev_h, xt], dim=1)
             reset_gate_out = self.reset_gate(catted)
-            reset_gate_out_times_prev_hidden = reset_gate_out * prev_h # (batch_size, embed_dim)
-            candidate_hidden_state =  self.candidate_state(torch.cat([reset_gate_out_times_prev_hidden, xt], dim=1))
+            reset_gate_out_times_prev_hidden = (
+                reset_gate_out * prev_h
+            )  # (batch_size, embed_dim)
+            candidate_hidden_state = self.candidate_state(
+                torch.cat([reset_gate_out_times_prev_hidden, xt], dim=1)
+            )
             update_gate_out = self.update_gate(catted)
             prev_h = prev_h * update_gate_out
-            prev_h = (1 - update_gate_out) * candidate_hidden_state  + prev_h
+            prev_h = (1 - update_gate_out) * candidate_hidden_state + prev_h
             # only predict for last word!!
             if t is seq_len - 1:
-                output = self.to_out(prev_h) # shape (batch_size, vocab_size)
-        
+                output = self.to_out(prev_h)  # shape (batch_size, vocab_size)
+
         # output is not probabilities, but logits (the paper uses softmax, but I decided to leave it out of the model)
-        return output # batch_size, vocab_size
+        return output  # batch_size, vocab_size
 
-
-            
 
 def build_dataset(words: List[str], seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
     X, Y = [], []
@@ -112,6 +112,7 @@ def train(model: RNNLangModel, names: List[str]):
             print(f"Epoch {epoch}/{epochs}, loss: {avg_loss / 10}")
             avg_loss = 0
 
+
 @torch.no_grad()
 def predict(model, seq_len):
     model.eval()
@@ -129,6 +130,7 @@ def predict(model, seq_len):
         result.append(pred)
     model.train()
     return "".join(itos[i] for i in result)
+
 
 @torch.no_grad()
 def test(model, inputs, targets):
