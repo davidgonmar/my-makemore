@@ -7,6 +7,7 @@ from data import get_names_dataloaders
 
 torch.manual_seed(0)
 
+
 class RNNLangModel(nn.Module):
     def __init__(self, embed_dim: int, vocab_size: int, hidden_units: int):
         super().__init__()
@@ -43,7 +44,6 @@ class RNNLangModel(nn.Module):
         return output  # batch_size, vocab_size
 
 
-
 @torch.no_grad()
 def predict(model, seq_len, stoi, itos):
     model.eval()
@@ -66,10 +66,20 @@ def predict(model, seq_len, stoi, itos):
 if __name__ == "__main__":
     train_dataloader, test_dataloader = get_names_dataloaders(seq_len=3, batch_size=128)
     model = RNNLangModel(10, train_dataloader.dataset.n_chars, 100)
-    
-    trainer = Trainer(model, torch.optim.Adam(model.parameters()), nn.CrossEntropyLoss(), train_dataloader, test_dataloader)
+
+    trainer = Trainer(
+        model,
+        torch.optim.Adam(model.parameters()),
+        nn.CrossEntropyLoss(),
+        train_dataloader,
+        test_dataloader,
+    )
     trainer.train(epochs=100)
     trainer.validate()
     # ask user for input
     for _ in range(20):
-        print(predict(model, 3, train_dataloader.dataset.stoi, train_dataloader.dataset.itos))
+        print(
+            predict(
+                model, 3, train_dataloader.dataset.stoi, train_dataloader.dataset.itos
+            )
+        )

@@ -1,10 +1,18 @@
-import torch #noqa
+import torch  # noqa
 import torch.nn as nn
 import torch.utils.data as data
 from typing import Optional
 
+
 class Trainer:
-    def __init__(self, model: nn.Module, optimizer: torch.optim.Optimizer, loss_fn: nn.Module, train_loader: data.DataLoader, val_loader: Optional[data.DataLoader] = None):
+    def __init__(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        loss_fn: nn.Module,
+        train_loader: data.DataLoader,
+        val_loader: Optional[data.DataLoader] = None,
+    ):
         """
         Initializes the Trainer object.
 
@@ -15,13 +23,13 @@ class Trainer:
         train_loader: A PyTorch DataLoader object containing the training data.
         val_loader: A PyTorch DataLoader object containing the validation data.
         """
-        
+
         self.model = model
         self.optimizer = optimizer
         self.loss_fn = loss_fn
         self.train_loader = train_loader
         self.val_loader = val_loader
-    
+
     def train(self, epochs: int, valinterval: int = -1, verbose: bool = True) -> None:
         """
         Trains the model for a specified number of epochs.
@@ -43,12 +51,12 @@ class Trainer:
 
                 if verbose:
                     print(f"Epoch {epoch}, loss: {loss.item()}", end="\r")
-                    
+
             # if we want to validate, get the average validation loss
             if epoch % valinterval == 0 and valinterval > 0:
                 val_loss = self.validate()
                 print(f"Epoch {epoch}, Validation loss: {val_loss}")
-    
+
     def validate(self) -> float:
         """
         Validates the model on the validation set.
@@ -65,7 +73,7 @@ class Trainer:
                 total_loss += loss.item() * inputs.size(0)
                 total_samples += inputs.size(0)
         return total_loss / total_samples
-    
+
     def get_model(self) -> nn.Module:
         """
         Returns the trained model.
