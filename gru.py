@@ -1,4 +1,3 @@
-"""Based on the paper Recurrent Neural Network Based Language Model - https://www.fit.vutbr.cz/research/groups/speech/publi/2010/mikolov_interspeech2010_IS100722.pdf"""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,7 +16,7 @@ itos = {idx: s for idx, s in enumerate(chars)}
 n_chars = len(chars)
 
 
-class RNNLangModel(nn.Module):
+class GRULangModel(nn.Module):
     def __init__(self, embed_dim: int, vocab_size: int, hidden_units: int):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, embed_dim)
@@ -81,7 +80,7 @@ def build_dataset(words: List[str], seq_len: int) -> Tuple[torch.Tensor, torch.T
     return X, Y
 
 
-def train(model: RNNLangModel, names: List[str]):
+def train(model: GRULangModel, names: List[str]):
     seq_len = 3
     x, y = build_dataset(names, seq_len)
     batch_size = 32
@@ -142,7 +141,7 @@ def test(model, inputs, targets):
 
 
 if __name__ == "__main__":
-    model = RNNLangModel(10, n_chars, 100)
+    model = GRULangModel(10, n_chars, 100)
     # shuffle names
     import random
 

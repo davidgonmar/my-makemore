@@ -27,7 +27,7 @@ class NeuralProbLM(nn.Module):
         self, vocab_size: int, vocab_dimensionality: int, seq_len: int, hidden_size
     ):
         """
-        Initializes the NeuralProbLM model.
+        Initializes the NeuralProbLM model as described in `A Neural Probabilistic Language Model` by Bengio et al (slightly modified)
 
         Args:
         vocab_size: An integer representing the number of characters in the vocabulary.
@@ -130,17 +130,35 @@ class NeuralProbLM(nn.Module):
 
 def build_dataset(words: List[str], seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
     X, Y = [], []
+    # creates pairs of sequences of length seq_len and the next character
     for w in words:
+        # for example, for 'hello', x will be
+        """
+        (['.', '.', '.'], 'h')
+        (['.', '.', 'h'], 'e')
+        (['.', 'h', 'e'], 'l')
+        (['h', 'e', 'l'], 'l')
+        (['e', 'l', 'l'], 'o')
+        (['l', 'l', 'o'], '.')
+        """
         context = [stoi["."]] * seq_len
         for ch in w + ".":
             ix = stoi[ch]
             X.append(context)
             Y.append(ix)
             context = context[1:] + [ix]
-
     X = torch.tensor(X)
     Y = torch.tensor(Y)
     return X, Y
+
+
+def regularization_loss(*args) -> torch.Tensor:
+    return sum((x.pow(2).mean() for x in args))
+
+
+def lr(epoch: int) -> float:
+    # learning rate schedule
+    return 0.1 / (1 + 0.1 * (epoch // 4000))
 
 
 def train(model: NeuralProbLM, names: List[str]):
@@ -153,13 +171,16 @@ def train(model: NeuralProbLM, names: List[str]):
     model.train()
     avg_loss = 0
     for epoch in range(epochs):
+        optim.param_groups[0]["lr"] = lr(epoch)
         idx = torch.randint(0, x.shape[0], (batch_size,))
         x_batch = x[idx]
         y_batch = y[idx]
 
         out = model(x_batch)
 
-        loss = F.cross_entropy(out, y_batch)
+        loss = F.cross_entropy(out, y_batch) + 0.001 * regularization_loss(
+            model.embed, model.H, model.U
+        )
 
         optim.zero_grad()
 

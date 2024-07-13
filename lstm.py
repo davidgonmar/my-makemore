@@ -1,7 +1,8 @@
-"""Based on the paper Recurrent Neural Network Based Language Model - https://www.fit.vutbr.cz/research/groups/speech/publi/2010/mikolov_interspeech2010_IS100722.pdf"""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from data import get_names_dataloaders
+from trainer import Trainer
 from util import read_names
 from typing import List, Tuple
 
@@ -17,7 +18,7 @@ itos = {idx: s for idx, s in enumerate(chars)}
 n_chars = len(chars)
 
 
-class RNNLangModel(nn.Module):
+class LSTMLangModel(nn.Module):
     def __init__(self, embed_dim: int, vocab_size: int, hidden_units: int):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, embed_dim)
@@ -46,27 +47,24 @@ class RNNLangModel(nn.Module):
         tokens = self.embed(input)
 
         # shape (hidden_units)
-        prev_h = torch.zeros(batch_size, self.hidden_units)
         prev_c = torch.zeros(batch_size, self.hidden_units)
+        hiddens = [torch.zeros(batch_size, self.hidden_units)]
 
-        output = None
         for t in range(seq_len):
             xt = tokens[:, t, :]
-            catted = torch.cat([xt, prev_h], dim=1)
+            catted = torch.cat([xt, hiddens[-1]], dim=1)
             forget_gate_out = self.forget_gate(catted)
             prev_c = prev_c * forget_gate_out
             input_gate_out = self.input_gate(catted)
             candidate_mem = self.candidate_mem_layer(catted)
             prev_c = prev_c + candidate_mem * input_gate_out
             output_gate_out = self.output_gate(catted)
-            prev_h = prev_c * output_gate_out
-
-            # only predict for last word!!
-            if t is seq_len - 1:
-                output = self.to_out(prev_h)  # shape (batch_size, vocab_size)
+            hiddens.append(prev_c * output_gate_out)
 
         # output is not probabilities, but logits (the paper uses softmax, but I decided to leave it out of the model)
-        return output  # batch_size, vocab_size
+        return self.to_out(
+            torch.stack(hiddens[1:], dim=1)
+        )  # batch_size, seq_len, vocab_size
 
 
 def build_dataset(words: List[str], seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -84,7 +82,7 @@ def build_dataset(words: List[str], seq_len: int) -> Tuple[torch.Tensor, torch.T
     return X, Y
 
 
-def train(model: RNNLangModel, names: List[str]):
+def train(model: LSTMLangModel, names: List[str]):
     seq_len = 3
     x, y = build_dataset(names, seq_len)
     batch_size = 32
@@ -117,45 +115,43 @@ def train(model: RNNLangModel, names: List[str]):
 
 
 @torch.no_grad()
-def predict(model, seq_len):
+def predict(model, seq_len, stoi, itos):
     model.eval()
-    # init all with '.'
-    context = [stoi["."]] * seq_len
-    result = []
-    while True:
-        x = torch.tensor([context])
-        out = model(x)
-        probs = torch.softmax(out, dim=1)
-        pred = torch.multinomial(probs, 1).item()
-        if pred == 0:
-            break
-        context = context[1:] + [pred]
-        result.append(pred)
-    model.train()
-    return "".join(itos[i] for i in result)
+    # start with '.' as the first character
+    input = torch.tensor([[stoi["."]]])
+    out = [itos[input.item()]]
+    for _ in range(seq_len):
+        out_logits = model(input)
+        # get the last token
+        input = torch.argmax(out_logits[:, -1, :], dim=1).unsqueeze(1)
+        out.append(itos[input.item()])
 
-
-@torch.no_grad()
-def test(model, inputs, targets):
-    model.eval()
-    out = model(inputs)
-    loss = F.cross_entropy(out, targets)
-    print(f"Test loss: {loss.item()}")
-    model.train()
+    return "".join(out).replace(".", "")
 
 
 if __name__ == "__main__":
-    model = RNNLangModel(10, n_chars, 100)
-    # shuffle names
-    import random
+    train_dataloader, test_dataloader = get_names_dataloaders(seq_len=3, batch_size=128)
+    model = LSTMLangModel(10, train_dataloader.dataset.n_chars, 100)
+    lfn = nn.CrossEntropyLoss()
 
-    random.shuffle(names)
-    names_train = names[: int(len(names) * 0.9)]
-    random.shuffle(names_train)
-    names_test = names[int(len(names) * 0.9) :]
-    train(model, names_train)
-    test(model, *build_dataset(names_test, 3))
+    def loss_fn(out, target):
+        # out of shape (batch_size * seq_len, vocab_size)
+        # target of shape (batch_size * seq_len)
+        return lfn(out.view(-1, out.size(2)), target.view(-1))
 
+    trainer = Trainer(
+        model,
+        torch.optim.Adam(model.parameters()),
+        loss_fn,
+        train_dataloader,
+        test_dataloader,
+    )
+    trainer.train(epochs=100)
+    trainer.validate()
     # ask user for input
     for _ in range(20):
-        print(predict(model, 3))
+        print(
+            predict(
+                model, 3, train_dataloader.dataset.stoi, train_dataloader.dataset.itos
+            )
+        )

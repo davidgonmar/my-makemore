@@ -8,7 +8,7 @@ names = read_names()
 
 chars = list(sorted(set("".join(names))))
 
-chars.insert(0, ".")  # Terminator (start and end) char
+chars.insert(0, ".")  # Ttrminator (start and end) char
 stoi = {s: idx for idx, s in enumerate(chars)}
 itos = {idx: s for idx, s in enumerate(chars)}
 
@@ -46,9 +46,18 @@ class Bigram(nn.Module):
         return x @ self.lt
 
 
+lr_dict = {
+    **{i: 100 for i in range(50)},
+    **{i: 80 for i in range(50, 150)},
+    **{i: 70 for i in range(150, 250)},
+    **{i: 60 for i in range(250, 350)},
+    **{i: 50 for i in range(350, 500)},
+}
+
+
 def train(epochs: int):
     model = Bigram(n_chars)
-    optimizer = torch.optim.SGD(model.parameters(), lr=100)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0)
     inputs = []
     targets = []
 
@@ -61,6 +70,9 @@ def train(epochs: int):
     inputs = torch.tensor(inputs)
     targets = torch.tensor(targets)
     for epoch in range(epochs):
+        # set the learning rate
+        optimizer.param_groups[0]["lr"] = lr_dict.get(epoch, 1)
+
         oh_inputs = F.one_hot(inputs, num_classes=n_chars).float()
 
         outs = model.forward(oh_inputs)
@@ -68,7 +80,7 @@ def train(epochs: int):
         # negative log likelihood (model doesnt output softmaxed)
         cse = nn.CrossEntropyLoss()
 
-        loss = cse(outs, targets) + 0.001 * model.lt.pow(2).mean()
+        loss = cse(outs, targets) + 0.001 * model.lt.pow(2).mean()  # L2 regularization
 
         loss.backward()
 
@@ -93,11 +105,11 @@ def predict(initial_char, model):
         pred = torch.multinomial(probabs, 1, True).item()
         prediction += itos[pred]
 
-    return prediction
+    return prediction.replace(".", "")
 
 
 if __name__ == "__main__":
-    trained = train(100)
+    trained = train(500)
 
     # predict
     while True:

@@ -40,16 +40,16 @@ class NamesDataset(Dataset):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         X, Y = [], []
         for w in words:
-            context = [self.stoi["."]] * seq_len
-            for ch in w + ".":
-                ix = self.stoi[ch]
-                X.append(context)
-                Y.append(ix)
-                context = context[1:] + [ix]
-
-        X = torch.tensor(X)
-        Y = torch.tensor(Y)
-        return X, Y
+            # build the dataset like this example for 'hello':
+            # X: ['.', 'h', 'e'], Y: ['h', 'e', 'l']
+            # X: ['h', 'e', 'l'], Y: ['e', 'l', 'l']
+            # X: ['e', 'l', 'l'], Y: ['l', 'l', 'o']
+            # X: ['l', 'l', 'o'], Y: ['l', 'o', '.']
+            w = "." + w + "."
+            for i in range(len(w) - seq_len):
+                X.append([self.stoi[s] for s in w[i : i + seq_len]])
+                Y.append([self.stoi[s] for s in w[i + 1 : i + seq_len + 1]])
+        return torch.tensor(X), torch.tensor(Y)
 
     def __len__(self):
         return len(self.names)
