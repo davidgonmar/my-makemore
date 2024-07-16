@@ -1,21 +1,9 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from data import get_names_dataloaders
 from trainer import Trainer
-from util import read_names
-from typing import List, Tuple
 
 torch.manual_seed(0)
-names = read_names()
-
-chars = list(sorted(set("".join(names))))
-
-chars.insert(0, ".")  # Terminator (start and end) char
-stoi = {s: idx for idx, s in enumerate(chars)}
-itos = {idx: s for idx, s in enumerate(chars)}
-
-n_chars = len(chars)
 
 
 class LSTMLangModel(nn.Module):
@@ -65,53 +53,6 @@ class LSTMLangModel(nn.Module):
         return self.to_out(
             torch.stack(hiddens[1:], dim=1)
         )  # batch_size, seq_len, vocab_size
-
-
-def build_dataset(words: List[str], seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
-    X, Y = [], []
-    for w in words:
-        context = [stoi["."]] * seq_len
-        for ch in w + ".":
-            ix = stoi[ch]
-            X.append(context)
-            Y.append(ix)
-            context = context[1:] + [ix]
-
-    X = torch.tensor(X)
-    Y = torch.tensor(Y)
-    return X, Y
-
-
-def train(model: LSTMLangModel, names: List[str]):
-    seq_len = 3
-    x, y = build_dataset(names, seq_len)
-    batch_size = 32
-    epochs = 300000
-    optim = torch.optim.SGD(model.parameters(), lr=0.1)
-    sched = torch.optim.lr_scheduler.StepLR(optim, step_size=100000, gamma=0.2)
-    model.train()
-    avg_loss = 0
-    for epoch in range(epochs):
-        idx = torch.randint(0, x.shape[0], (batch_size,))
-        x_batch = x[idx]
-        y_batch = y[idx]
-
-        out = model(x_batch)
-
-        loss = F.cross_entropy(out, y_batch)
-
-        optim.zero_grad()
-
-        loss.backward()
-
-        optim.step()
-        sched.step()
-
-        avg_loss += loss.item()
-
-        if epoch % 10 == 0:
-            print(f"Epoch {epoch}/{epochs}, loss: {avg_loss / 10}")
-            avg_loss = 0
 
 
 @torch.no_grad()

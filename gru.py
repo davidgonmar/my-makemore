@@ -1,19 +1,9 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from util import read_names
-from typing import List, Tuple
+from data import get_names_dataloaders
+from trainer import Trainer
 
 torch.manual_seed(0)
-names = read_names()
-
-chars = list(sorted(set("".join(names))))
-
-chars.insert(0, ".")  # Terminator (start and end) char
-stoi = {s: idx for idx, s in enumerate(chars)}
-itos = {idx: s for idx, s in enumerate(chars)}
-
-n_chars = len(chars)
 
 
 class GRULangModel(nn.Module):
@@ -39,119 +29,67 @@ class GRULangModel(nn.Module):
 
         # shape (batch_size, seq_len, embed_dim)
         tokens = self.embed(input)
+        hiddens = [torch.zeros(batch_size, self.hidden_units)]
 
-        # shape (hidden_units)
-        prev_h = torch.zeros(batch_size, self.hidden_units)
-
-        output = None
         for t in range(seq_len):
             xt = tokens[:, t, :]  # shape (batch_size, embed_dim)
-            catted = torch.cat([prev_h, xt], dim=1)
+            catted = torch.cat([hiddens[-1], xt], dim=1)
             reset_gate_out = self.reset_gate(catted)
             reset_gate_out_times_prev_hidden = (
-                reset_gate_out * prev_h
+                reset_gate_out * hiddens[-1]
             )  # (batch_size, embed_dim)
             candidate_hidden_state = self.candidate_state(
                 torch.cat([reset_gate_out_times_prev_hidden, xt], dim=1)
             )
             update_gate_out = self.update_gate(catted)
-            prev_h = prev_h * update_gate_out
-            prev_h = (1 - update_gate_out) * candidate_hidden_state + prev_h
-            # only predict for last word!!
-            if t is seq_len - 1:
-                output = self.to_out(prev_h)  # shape (batch_size, vocab_size)
+            h = hiddens[-1] * update_gate_out
+            h = (1 - update_gate_out) * candidate_hidden_state + h
+            hiddens.append(h)
 
         # output is not probabilities, but logits (the paper uses softmax, but I decided to leave it out of the model)
-        return output  # batch_size, vocab_size
-
-
-def build_dataset(words: List[str], seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
-    X, Y = [], []
-    for w in words:
-        context = [stoi["."]] * seq_len
-        for ch in w + ".":
-            ix = stoi[ch]
-            X.append(context)
-            Y.append(ix)
-            context = context[1:] + [ix]
-
-    X = torch.tensor(X)
-    Y = torch.tensor(Y)
-    return X, Y
-
-
-def train(model: GRULangModel, names: List[str]):
-    seq_len = 3
-    x, y = build_dataset(names, seq_len)
-    batch_size = 32
-    epochs = 300000
-    optim = torch.optim.SGD(model.parameters(), lr=0.1)
-    sched = torch.optim.lr_scheduler.StepLR(optim, step_size=100000, gamma=0.2)
-    model.train()
-    avg_loss = 0
-    for epoch in range(epochs):
-        idx = torch.randint(0, x.shape[0], (batch_size,))
-        x_batch = x[idx]
-        y_batch = y[idx]
-
-        out = model(x_batch)
-
-        loss = F.cross_entropy(out, y_batch)
-
-        optim.zero_grad()
-
-        loss.backward()
-
-        optim.step()
-        sched.step()
-
-        avg_loss += loss.item()
-
-        if epoch % 10 == 0:
-            print(f"Epoch {epoch}/{epochs}, loss: {avg_loss / 10}")
-            avg_loss = 0
+        return self.to_out(
+            torch.stack(hiddens[1:], dim=1)
+        )  # batch_size, seq_len, vocab_size
 
 
 @torch.no_grad()
-def predict(model, seq_len):
+def predict(model, seq_len, stoi, itos):
     model.eval()
-    # init all with '.'
-    context = [stoi["."]] * seq_len
-    result = []
-    while True:
-        x = torch.tensor([context])
-        out = model(x)
-        probs = torch.softmax(out, dim=1)
-        pred = torch.multinomial(probs, 1).item()
-        if pred == 0:
-            break
-        context = context[1:] + [pred]
-        result.append(pred)
-    model.train()
-    return "".join(itos[i] for i in result)
+    # start with '.' as the first character
+    input = torch.tensor([[stoi["."]]])
+    out = [itos[input.item()]]
+    for _ in range(seq_len):
+        out_logits = model(input)
+        # get the last token
+        input = torch.argmax(out_logits[:, -1, :], dim=1).unsqueeze(1)
+        out.append(itos[input.item()])
 
-
-@torch.no_grad()
-def test(model, inputs, targets):
-    model.eval()
-    out = model(inputs)
-    loss = F.cross_entropy(out, targets)
-    print(f"Test loss: {loss.item()}")
-    model.train()
+    return "".join(out).replace(".", "")
 
 
 if __name__ == "__main__":
-    model = GRULangModel(10, n_chars, 100)
-    # shuffle names
-    import random
+    train_dataloader, test_dataloader = get_names_dataloaders(seq_len=3, batch_size=128)
+    model = GRULangModel(10, train_dataloader.dataset.n_chars, 100)
+    lfn = nn.CrossEntropyLoss()
 
-    random.shuffle(names)
-    names_train = names[: int(len(names) * 0.9)]
-    random.shuffle(names_train)
-    names_test = names[int(len(names) * 0.9) :]
-    train(model, names_train)
-    test(model, *build_dataset(names_test, 3))
+    def loss_fn(out, target):
+        # out of shape (batch_size * seq_len, vocab_size)
+        # target of shape (batch_size * seq_len)
+        return lfn(out.view(-1, out.size(2)), target.view(-1))
 
+    trainer = Trainer(
+        model,
+        torch.optim.Adam(model.parameters()),
+        loss_fn,
+        train_dataloader,
+        test_dataloader,
+    )
+    trainer.train(epochs=100)
+    trainer.validate()
     # ask user for input
     for _ in range(20):
-        print(predict(model, 3))
+        print(
+            predict(
+                model, 3, train_dataloader.dataset.stoi, train_dataloader.dataset.itos
+            )
+        )

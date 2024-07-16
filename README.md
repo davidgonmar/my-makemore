@@ -30,7 +30,7 @@ The requirements can be installed with:
 pip install -r requirements.txt
 ```
 
-You can use other kind of setup, like a virtual environment, or a conda environment.
+Probably, any modern version of Python + Torch will work just fine.
 
 ## References
 
